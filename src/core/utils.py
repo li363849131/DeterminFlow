@@ -106,6 +106,9 @@ def _sanitize_tool_pairs(messages: list[BaseMessage]) -> list[BaseMessage]:
                 continue
         final.append(msg)
 
+    # 合并多个 system 消息，避免 Anthropic API 报错
+    final = _merge_system_messages(final)
+
     return final
 
 
@@ -181,6 +184,9 @@ def _sanitize_tool_pairs_strict(messages: list[BaseMessage]) -> list[BaseMessage
             # 无文本则直接丢弃
             continue
         rebuilt.append(msg)
+
+    # 合并多个 system 消息，避免 Anthropic API 报错
+    rebuilt = _merge_system_messages(rebuilt)
 
     return rebuilt
 
@@ -288,4 +294,54 @@ def trim_langchain_messages(messages: list[BaseMessage], max_tokens: int) -> lis
     # 截断后修复不完整的 tool_calls / tool 消息配对
     result = _sanitize_tool_pairs(result)
 
+    # 合并多个 system 消息，避免 Anthropic API 报错
+    result = _merge_system_messages(result)
+
     return result
+
+
+def _merge_system_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """
+    合并多个 SystemMessage 为一个，避免 Anthropic API 报错。
+
+    Anthropic API 要求：
+    - 所有 system 消息必须合并为一个
+    - system 消息必须在最开始
+
+    Args:
+        messages: 消息列表
+
+    Returns:
+        合并后的消息列表
+    """
+    if not messages:
+        return messages
+
+    system_msgs = []
+    other_msgs = []
+
+    for msg in messages:
+        if isinstance(msg, SystemMessage):
+            system_msgs.append(msg)
+        else:
+            other_msgs.append(msg)
+
+    # 如果没有或只有一个 system 消息，直接返回
+    if len(system_msgs) <= 1:
+        return messages
+
+    # 合并所有 system 消息的内容
+    merged_content = "\n\n".join(
+        str(msg.content) if msg.content else ""
+        for msg in system_msgs
+    ).strip()
+
+    if not merged_content:
+        # 如果所有 system 消息都是空的，返回非 system 消息
+        return other_msgs
+
+    # 创建一个新的合并后的 SystemMessage
+    merged_system = SystemMessage(content=merged_content)
+
+    # 返回：合并的 system 消息 + 其他消息
+    return [merged_system] + other_msgs
